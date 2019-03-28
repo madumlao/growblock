@@ -1,0 +1,231 @@
+#!/bin/bash
+# script to check / resize a DigitalOcean block based on current usage
+# requires doctl, jq installed
+
+NAME="$(basename $0)"
+
+# check requirements
+for req in doctl jq; do
+	if ! type -t $req >/dev/null; then
+		echo $NAME requires $req installed
+		exit 1
+	fi
+done
+
+OPTS=$(getopt -n "$NAME" \
+	--options hdrcvn:i:t:g:m:c: \
+	--long help \
+	--long dry-run \
+	--long resize \
+	--long check \
+	--long verbose \
+	--long id: \
+	--long name: \
+	--long mount: \
+	--long threshold: \
+	--long grow: \
+	--long config: \
+	--long context: \
+       	-- "$@" \
+)
+if [ "$?" != 0 ]; then echo "$NAME: Failed to parse options"; exit 1; fi
+eval set -- "$OPTS"
+
+ACTION=help
+BLOCK_THRESHOLD=80%
+BLOCK_GROW=20%
+while true; do
+	case "$1" in
+		-h| --help) ACTION=help; shift;;
+		-d| --dry-run) DRY_RUN=true; shift;;
+		-c| --check) ACTION=check; shift;;
+		-r| --resize) ACTION=resize; shift;;
+		-v| --verbose) VERBOSE=true; shift;;
+		-i| --id) BLOCK_ID=$2; shift 2;;
+		-n| --name) BLOCK_NAME=$2; shift 2;;
+		-m| --mount) BLOCK_MOUNT=$2; shift 2;;
+		-t| --threshold) BLOCK_THRESHOLD=$2; shift 2;;
+		-g| --grow) BLOCK_GROW=$2; shift 2;;
+		-c| --config) DOCTL_CONFIG=$2; shift 2;;
+		--context) DOCTL_CONTEXT=$2; shift 2;;
+		-- ) shift; break ;;
+	esac
+done
+
+if echo "$BLOCK_THRESHOLD" | grep -q '%'; then
+	BLOCK_THRESHOLD_MODE='%'
+	BLOCK_THRESHOLD=$(echo "$BLOCK_THRESHOLD"| tr -d ' %')
+else
+	BLOCK_THRESHOLD_MODE='G'
+	BLOCK_THRESHOLD=$(echo "$BLOCK_THRESHOLD"| tr -d ' G')
+fi
+
+if echo "$BLOCK_GROW" | grep -q '%';  then
+	BLOCK_GROW_MODE='%'
+	BLOCK_GROW=$(echo "$BLOCK_GROW"| tr -d ' %')
+else
+	BLOCK_GROW_MODE='G'
+	BLOCK_GROW=$(echo "$BLOCK_GROW"|tr -d ' G')
+fi
+
+### functions
+print_help() {
+	echo "$NAME [action] [opts]..."
+	echo "Check if a DigitalOcean block storage needs resizing and optionally resize it"
+	echo "Actions are: --check | --resize | --help"
+	echo "--help : this message"
+	echo "--check : return 0 if volume needs to be resized and 1 otherwise"
+	echo "  -m MOUNT | --mount=MOUNT : (required) mountpoint of storage to check"
+	echo "  -t THRESHOLD | --threshold=THRESHOLD : threshold before triggering resize"
+	echo "     Threshold values:"
+	echo "     80% (default) = less than 20% free"
+	echo "     20 or 20G = less than 10G free"
+	echo "--resize : perform the resize if threshold is reached (accepts all --check options)"
+	echo "  -d | --dry-run : do not perform any actions"
+	echo "  -i ID | --id=ID : ID of DigitalOcean storage to resize. Either name or id required"
+	echo "  -n NAME | --name=NAME: name of DigitalOcean storage to resize. Either name or id required"
+	echo "  -g GROW | --grow=GROW: amount"
+	echo "     Grow values:"
+	echo "     20% (default) = add 20% to current size"
+	echo "     20 or 20G = add 20G to current size"
+	echo "Other opts: "
+	echo " -c CONFIG | --config CONFIG : doctl config file"
+	echo " --context CONTEXT: doctl context"
+	echo " -v | --verbose : verbose output"
+}
+
+df_percent() {
+	local MOUNT=$1
+	df --output=pcent "$MOUNT"|tail -n1|tr -d ' %'
+}
+df_avail() {
+	local MOUNT=$1
+	df --block-size=G --output=avail "$MOUNT"|tail -n1|tr -d ' G'
+}
+df_device() {
+	local MOUNT=$1
+	df --output=source "$MOUNT"|tail -n1
+}
+
+check_threshold_percent() {
+	local MOUNT=$1
+	local THRESHOLD=$2
+
+	local pcent=$(df_percent "$MOUNT")
+	test "$pcent" -ge "$THRESHOLD"
+}
+
+check_threshold_avail() {
+	local MOUNT=$1
+	local THRESHOLD=$2
+
+	local avail=$(df_avail "$MOUNT")
+	test "$avail" -le "$THRESHOLD"
+}
+
+over_threshold() {
+	local MOUNT=$1
+	local THRESHOLD=$2
+
+	if echo "$THRESHOLD" | grep -q '%' ; then
+		check_threshold_percent "$MOUNT" "$THRESHOLD"
+	else
+		check_threshold_avail "$MOUNT" "$THRESHOLD"
+	fi
+}
+###
+
+### begin logic
+if [ "$ACTION" = "check" ] || [ "$ACTION" = "resize" ]; then
+	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for $ACTION"; exit 1; fi
+
+	over_threshold "$BLOCK_MOUNT" "$BLOCK_THRESHOLD"
+	RESIZE_NEEDED="$?"
+	if [ "$RESIZE_NEEDED" = "0" ]; then
+		if [ "$BLOCK_THRESHOLD_MODE" = "%" ]; then
+			echo "$BLOCK_MOUNT ($(df_percent "$BLOCK_MOUNT")%) over $BLOCK_THRESHOLD%, Resize needed"
+		else
+			echo "$BLOCK_MOUNT ($(df_avail "$BLOCK_MOUNT")G) under ${BLOCK_THRESHOLD}G, Resize needed"
+		fi
+	elif [ "$VERBOSE" ]; then
+		if [ "$BLOCK_THRESHOLD_MODE" = "%" ]; then
+			echo "$BLOCK_MOUNT ($(df_percent "$BLOCK_MOUNT")%) within $BLOCK_THRESHOLD% limit"
+		else
+			echo "$BLOCK_MOUNT ($(df_avail "$BLOCK_MOUNT")G) within ${BLOCK_THRESHOLD}G limit"
+		fi
+	fi
+
+	if [ "$ACTION" = "check" ]; then
+		exit $RESIZE_NEEDED
+	fi
+fi
+	
+if [ "$ACTION" = "resize" ] && [ "$RESIZE_NEEDED" = 0 ]; then
+	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for resize"; fi
+	if [ -z "$BLOCK_ID" ] && [ -z "$BLOCK_NAME" ]; then
+		echo "Either -i|--id or -n|--name option required for resize";
+	fi
+	DOCTL_OPTS="--output=json"
+	if [ "$DOCTL_CONFIG" ]; then
+		DOCTL_OPTS="$DOCTL_OPTS --config ${DOCTL_CONFIG}"
+	fi
+	if [ "$DOCTL_CONTEXT" ]; then
+		DOCTL_OPTS="$DOCTL_OPTS --context ${DOCTL_CONTEXT}"
+	fi
+	if [ "$VERBOSE" ]; then
+		DOCTL_OPTS="$DOCTL_OPTS --verbose"
+	fi
+
+	if [ -z "$BLOCK_ID" ]; then
+		BLOCK_ID=$(doctl $DOCTL_OPTS compute volume ls "$BLOCK_NAME" 2>/dev/null | \
+			jq --join-output '.[].id' 2>/dev/null )
+
+		if ! [ "$?" = "0" ] || [ -z "$BLOCK_ID" ]; then
+			echo "Cannot find volume with name $BLOCK_NAME"
+			exit 1
+		fi
+	fi
+
+	REGION_SLUG=$(doctl $DOCTL_OPTS compute volume get "$BLOCK_ID" | jq --join-output '.[].region.slug')
+	CURRENT_SIZE=$(doctl $DOCTL_OPTS compute volume get "$BLOCK_ID" | jq '.[].size_gigabytes')
+	if [ "$BLOCK_GROW_MODE" = '%' ]; then
+		NEW_SIZE=$(echo "import math; print( int(math.ceil($CURRENT_SIZE * ((100 + $BLOCK_GROW) / 100.0 ))))" | python)
+	else
+		NEW_SIZE=$((CURRENT_SIZE + BLOCK_GROW))
+	fi
+
+	if [ "$VERBOSE" ]; then
+		echo size of $BLOCK_ID is $CURRENT_SIZE, resizing to $NEW_SIZE
+	fi
+
+	if [ "$NEW_SIZE" -le "$CURRENT_SIZE" ]; then
+		echo "New size of $NEW_SIZE not larger than $CURRENT_SIZE, no-op"
+		exit 1
+	fi
+
+	BLOCK_DEVICE=$(df_device "$BLOCK_MOUNT")
+
+	if [ "$DRY_RUN" ]; then
+		echo doctl $DOCTL_OPTS compute volume-resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG"
+		echo resize2fs "$BLOCK_DEVICE"
+	else
+		ACTION_ID=$(doctl $DOCTL_OPTS compute volume-resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG" | \
+			jq --join-output '.[].id')
+
+		# wait until action is completed
+		action_status() {
+			ACTION_STATUS=$(doctl $DOCTL_OPTS compute action get "$ACTION_ID" | jq --join-output '.[].status')
+		}
+		action_status
+		while [ "$ACTION_STATUS" = "in-progress" ]; do
+			sleep 3
+			action_status
+		done
+
+		resize2fs "$BLOCK_DEVICE"
+	fi
+fi
+
+if [ "$ACTION" = "help" ]; then
+	print_help
+fi
