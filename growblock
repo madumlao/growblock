@@ -209,10 +209,10 @@ if [ "$ACTION" = "resize" ] && [ "$RESIZE_NEEDED" = 0 ]; then
 	BLOCK_DEVICE=$(df_device "$BLOCK_MOUNT")
 
 	if [ "$DRY_RUN" ]; then
-		echo doctl $DOCTL_OPTS compute volume-resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG"
+		echo doctl $DOCTL_OPTS compute volume-action resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG"
 		echo resize2fs "$BLOCK_DEVICE"
 	else
-		ACTION_ID=$(doctl $DOCTL_OPTS compute volume-resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG" | \
+		ACTION_ID=$(doctl $DOCTL_OPTS compute volume-action resize "$BLOCK_ID" --size "$NEW_SIZE" --region "$REGION_SLUG" | \
 			jq --join-output '.[].id')
 
 		# wait until action is completed
