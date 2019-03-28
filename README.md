@@ -3,6 +3,8 @@ Script that checks / resizes a DigitalOcean block storage based on current usage
 
 Requires [jq](https://stedolan.github.io/jq/) and [doctl](https://www.digitalocean.com/community/tutorials/how-to-use-doctl-the-official-digitalocean-command-line-client) installed.
 
+Before running growblock, first configure `doctl` with your access key using `doctl auth init`.
+
 ## Usage:
 ~~~
 growblock [action] [opts]...
