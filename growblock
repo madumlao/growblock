@@ -141,7 +141,7 @@ over_threshold() {
 if [ "$ACTION" = "check" ] || [ "$ACTION" = "resize" ]; then
 	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for $ACTION"; exit 1; fi
 
-	echo over_threshold "$BLOCK_MOUNT" "$BLOCK_THRESHOLD" "$BLOCK_THRESHOLD_MODE"
+	over_threshold "$BLOCK_MOUNT" "$BLOCK_THRESHOLD" "$BLOCK_THRESHOLD_MODE"
 	RESIZE_NEEDED="$?"
 	if [ "$RESIZE_NEEDED" = "0" ]; then
 		if [ "$BLOCK_THRESHOLD_MODE" = "%" ]; then
