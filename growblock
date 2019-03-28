@@ -163,9 +163,10 @@ if [ "$ACTION" = "check" ] || [ "$ACTION" = "resize" ]; then
 fi
 	
 if [ "$ACTION" = "resize" ] && [ "$RESIZE_NEEDED" = 0 ]; then
-	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for resize"; fi
+	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for resize"; exit 1; fi
 	if [ -z "$BLOCK_ID" ] && [ -z "$BLOCK_NAME" ]; then
 		echo "Either -i|--id or -n|--name option required for resize";
+		exit 1
 	fi
 	DOCTL_OPTS="--output=json"
 	if [ "$DOCTL_CONFIG" ]; then
