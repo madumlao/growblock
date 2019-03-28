@@ -52,22 +52,22 @@ growblock --check --threshold 10G --mount /mnt/my_block
 ### Resize dry-run
 Print actions that would have been taken on resize
 ~~~
-growblock --resize --dry-run --mount /mnt/my_block
+growblock --resize --dry-run --mount /mnt/my_block --name my-block
 ~~~
 
 ### Resize
 Perform the resize online
 ~~~
-growblock --resize --mount /mnt/my_block
+growblock --resize --mount /mnt/my_block --name my-block
 ~~~
 
 ### Resize with specified threshold / amount
 Specifies that volume should grow by 20G when free space falls below 10G
 ~~~
-growblock --resize --mount /mnt/my_block --threshold 10G --grow 20G
+growblock --resize --mount /mnt/my_block --name my-block --threshold 10G --grow 20G
 ~~~
 
 Specifies that volume should grow by 20% when free space falls below 10%
 ~~~
-growblock --resize --mount /mnt/my_block --threshold 90% --grow 20%
+growblock --resize --mount /mnt/my_block --name my-block --threshold 90% --grow 20%
 ~~~
