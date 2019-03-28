@@ -126,12 +126,14 @@ check_threshold_avail() {
 over_threshold() {
 	local MOUNT=$1
 	local THRESHOLD=$2
+	local MODE=$3
 
-	if echo "$THRESHOLD" | grep -q '%' ; then
+	if [ "$MODE" = "%" ] ; then
 		check_threshold_percent "$MOUNT" "$THRESHOLD"
 	else
 		check_threshold_avail "$MOUNT" "$THRESHOLD"
 	fi
+	return $?
 }
 ###
 
@@ -139,7 +141,8 @@ over_threshold() {
 if [ "$ACTION" = "check" ] || [ "$ACTION" = "resize" ]; then
 	if [ -z "$BLOCK_MOUNT" ]; then echo "-m|--mount option required for $ACTION"; exit 1; fi
 
-	over_threshold "$BLOCK_MOUNT" "$BLOCK_THRESHOLD"
+	echo over_threshold "$BLOCK_MOUNT" "$BLOCK_THRESHOLD" "$BLOCK_THRESHOLD_MODE"
+exit 1
 	RESIZE_NEEDED="$?"
 	if [ "$RESIZE_NEEDED" = "0" ]; then
 		if [ "$BLOCK_THRESHOLD_MODE" = "%" ]; then
